@@ -7,10 +7,12 @@ import time
 import io
 from dotenv import load_dotenv
 import os
+import re
 
 load_dotenv()
 
 fireworks.client.api_key = os.getenv('FIREWORKS_API')
+model = os.getenv('FIREWORKS_MODEL')
 
 prompt = """
 Bạn là một chuyên gia phân tích ngôn ngữ tự nhiên, nhiệm vụ của bạn là phân tích cảm xúc cho từng comment dựa trên nội dung của bài post. Mỗi comment sẽ có một ID duy nhất được cung cấp từ input. Bạn cần phân loại cảm xúc, xác định các từ khóa chính ảnh hưởng đến cảm xúc đó, trích xuất thông tin về thương hiệu, xác định xem comment có phải quảng cáo hoặc spam không, dự đoán nhãn ngành nghề (label), giải thích ý định (intent) và góc nhìn (angle) của comment.
@@ -57,7 +59,6 @@ Bạn là một chuyên gia phân tích ngôn ngữ tự nhiên, nhiệm vụ c�
 [
   {
     "id": "Mã định danh duy nhất của comment.",
-    "comment": "Nội dung comment.",
     "sentiment": "POSITIVE, NEGATIVE, NEUTRAL, hoặc MIXED",
     "keyword": [
       "Danh sách các từ khóa ảnh hưởng đến cảm xúc, là tính từ mô tả cảm xúc, không chứa tên riêng hoặc brand."
@@ -74,6 +75,59 @@ Bạn là một chuyên gia phân tích ngôn ngữ tự nhiên, nhiệm vụ c�
 Chỉ trả về kết quả theo format ```json không giải thích gì thêm, phân tích dựa trên dữ liệu đã cung cấp, không sáng tạo gì thêm
 No yapping
 """
+
+
+def remove_emoji_link_hashtag(content):
+    # Remove emojis (uses a regex pattern to match common Unicode emoji ranges)
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U00002700-\U000027BF"  # Dingbats
+        "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+        "\U00002600-\U000026FF"  # Miscellaneous Symbols
+        "\U00002B50-\U00002B55"  # Stars
+        "\U00002E80-\U00002EFF"  # CJK Radicals Supplement
+        "\U0001F004-\U0001F9C0"  # Mahjong Tiles and Dominos
+        "]+", flags=re.UNICODE
+    )
+    content = emoji_pattern.sub(r'', content)
+
+    # Remove links (matches http, https, www, or domain-based links)
+    url_pattern = re.compile(r'http[s]?://\S+|www\.\S+')
+    content = url_pattern.sub(r'', content)
+
+    # Remove hashtags (matches words that start with #)
+    hashtag_pattern = re.compile(r'#\w+')
+    content = hashtag_pattern.sub(r'', content)
+
+    # Optionally remove multiple spaces left after removal
+    content = re.sub(r'\s+', ' ', content).strip()
+
+    return content
+
+
+def convert_to_boolean(bool_value):
+    # If it's already a boolean, return it directly
+    if isinstance(bool_value, bool):
+        return bool_value
+
+    # If it's a string, convert to lowercase and check for typical boolean strings
+    if isinstance(bool_value, str):
+        spam_value = bool_value.strip().lower()
+        if spam_value in ['true', 'yes', '1']:
+            return True
+        elif spam_value in ['false', 'no', '0']:
+            return False
+
+    # If it's a number, return True for non-zero values, False for zero
+    if isinstance(bool_value, (int, float)):
+        return bool(bool_value)
+
+    # If none of the above types match, return False as default
+    return False
 
 def extract_json_from_string(input_string):
     try:
@@ -116,8 +170,9 @@ def read_and_group_csv(df):
 
 def call_inference(post_data, prompt):
     """Call the Llama model for inference on post data."""
+    print(post_data)
     completion = fireworks.client.ChatCompletion.create(
-        "accounts/fireworks/models/llama-v3-70b-instruct",
+        model,
         messages=[
             {"role": "system", "content": "Bạn là một chuyên gia phân tích ngôn ngữ tự nhiên."},
             {"role": "user", "content": f"{prompt}\n\nInput: {str(post_data)}"}
@@ -126,7 +181,6 @@ def call_inference(post_data, prompt):
         max_tokens=16000
     )
     result = completion.choices[0].message.content
-    print(result)
     return extract_json_from_string(result)
 
 
@@ -134,6 +188,7 @@ def inference(grouped_comments, prompt):
     """Perform inference for each post and collect results."""
     results = []
     for post_data in grouped_comments:
+        post_data['post_content'] = remove_emoji_link_hashtag(post_data['post_content'])
         json_data = call_inference(post_data, prompt)
         if json_data:
             results.append(json_data)
@@ -185,8 +240,8 @@ def merge_results_with_df(results, df_raw):
     expected_fields = ['sentiment', 'keyword', 'brand_attribute', 'advertisement', 'spam', 'label', 'intent', 'angle']
     ensure_columns_exist(df_raw, expected_fields)
     out_df = update_existing_rows(df_raw, new_df)
-    out_df['spam'] = out_df['spam'].astype(bool)
-    out_df['advertisement'] = out_df['advertisement'].astype(bool)
+    out_df['spam'] = convert_to_boolean(['spam'])
+    out_df['advertisement'] = convert_to_boolean(['advertisement'])
     out_df.loc[(out_df['spam'] == True) | (out_df['advertisement'] == True), 'sentiment'] = "NEUTRAL"
     return out_df
 
