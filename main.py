@@ -252,7 +252,7 @@ if uploaded_file is not None:
                 if file_format == 'Excel':
                     processed_file_path = "processed_results.xlsx"
                     towrite = io.BytesIO()
-                    result_df.to_excel(towrite, encoding='utf-8', index=False, engine='xlsxwriter')
+                    result_df.to_excel(towrite, index=False, engine='xlsxwriter')
                     towrite.seek(0)
                     st.download_button('Download Processed Excel', towrite, file_name='processed_results.xlsx',
                                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
