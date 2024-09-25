@@ -204,6 +204,8 @@ def ensure_columns_exist(df, columns):
 
 def update_existing_rows(df, new_df):
     """Update existing rows in the DataFrame with new data from inference."""
+    updated_rows = []
+
     for index, row in new_df.iterrows():
         matching_rows = df[df['Id'] == row['id']]
 
@@ -228,7 +230,10 @@ def update_existing_rows(df, new_df):
                 'intent': row.get('intent', ""),
                 'angle': row.get('angle', "")
             }
-            df = df.append(new_row, ignore_index=True)
+            updated_rows.append(new_row)
+    if updated_rows:
+        new_rows_df = pd.DataFrame(updated_rows)
+        df = pd.concat([df, new_rows_df], ignore_index=True)
     return df
 
 
